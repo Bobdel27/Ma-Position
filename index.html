@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Méridien — Repère de position</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    --ink:#0e1a2b;
+    --ink-2:#12233a;
+    --ink-3:#182c46;
+    --paper:#f3eee2;
+    --paper-dim:#c9c2ae;
+    --brass:#c9963f;
+    --brass-light:#e6bd78;
+    --red:#d6462f;
+    --red-dark:#b53a26;
+    --green:#3e8e52;
+    --green-dark:#307141;
+    --blue:#3468a5;
+    --blue-dark:#285387;
+    --line: rgba(243,238,226,.12);
+    --mono:'JetBrains Mono', ui-monospace, Menlo, monospace;
+    --serif:'Fraunces', Georgia, serif;
+    --sans:'Inter', system-ui, -apple-system, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  html{
+    position:fixed;
+    overscroll-behavior:none;
+    width:100%;
+  }
+  body{
+    font-family:var(--sans);
+    background:var(--ink);
+    color:var(--paper);
+    overflow:hidden;
+    overscroll-behavior:none;
+    position:fixed;
+    width:100%;
+    -webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+  }
+  #map{
+    position:fixed;
+    inset:0;
+    background:#182335;
+    touch-action:none;
+  }
+  /* ---------- top bar ---------- */
+  .topbar{
+    position:fixed;
+    top:0; left:0; right:0;
+    z-index:900;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:calc(env(safe-area-inset-top) + 12px) 18px 12px;
+    background:linear-gradient(180deg, rgba(14,26,43,.92) 10%, rgba(14,26,43,0) 100%);
+    pointer-events:none;
+  }
+  .brand{
+    font-family:var(--serif);
+    font-weight:600;
+    font-size:17px;
+    letter-spacing:.02em;
+    color:var(--paper);
+    display:flex;
+    align-items:baseline;
+    gap:8px;
+  }
+  .brand small{
+    font-family:var(--mono);
+    font-size:10px;
+    font-weight:400;
+    color:var(--brass-light);
+    letter-spacing:.14em;
+    text-transform:uppercase;
+  }
+  .ticker{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--paper-dim);
+    letter-spacing:.03em;
+    text-align:right;
+    line-height:1.5;
+  }
+  .ticker b{color:var(--brass-light); font-weight:500;}
+
+  /* ---------- topbar icon button ---------- */
+  .icon-btn{
+    pointer-events:auto;
+    width:34px;height:34px;
+    flex:none;
+    border-radius:50%;
+    border:1px solid rgba(201,150,63,.5);
+    background:rgba(14,26,43,.72);
+    color:var(--brass-light);
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    transition:background .15s ease, transform .12s ease;
+  }
+  .icon-btn:hover{background:rgba(201,150,63,.16);}
+  .icon-btn:active{transform:scale(.93);}
+  .icon-btn:focus-visible{outline:2px solid var(--brass-light); outline-offset:2px;}
+  .icon-btn svg{width:17px;height:17px;}
+  .topbar-controls{display:flex; align-items:center; gap:10px; pointer-events:none;}
+  .topbar-controls .icon-btn{pointer-events:auto;}
+
+  /* ---------- panel ---------- */
+  .panel{
+    position:fixed;
+    z-index:1000;
+    background:linear-gradient(180deg, var(--ink-2), var(--ink));
+    border-top:1px solid rgba(201,150,63,.35);
+    box-shadow:0 -12px 40px rgba(0,0,0,.45);
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    transition:transform .38s cubic-bezier(.4,0,.2,1);
+  }
+  .panel.collapsed{
+    transform:translateY(calc(100% - 2px));
+  }
+
+  /* reopen tab, mobile bottom-sheet convention */
+  .reopen-tab{
+    position:fixed;
+    left:50%;
+    bottom:calc(env(safe-area-inset-bottom) + 14px);
+    transform:translateX(-50%) translateY(24px);
+    z-index:999;
+    display:flex; align-items:center; gap:7px;
+    background:linear-gradient(180deg, var(--ink-2), var(--ink));
+    border:1px solid rgba(201,150,63,.5);
+    color:var(--brass-light);
+    font-family:var(--sans); font-weight:600; font-size:12.5px;
+    padding:10px 18px;
+    border-radius:22px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .3s ease, transform .3s ease;
+  }
+  .reopen-tab svg{width:14px;height:14px;}
+  body.panel-collapsed .reopen-tab{
+    opacity:1;
+    pointer-events:auto;
+    transform:translateX(-50%) translateY(0);
+  }
+  .panel-scroll{
+    overflow-y:auto;
+    padding:18px 20px calc(env(safe-area-inset-bottom) + 18px);
+    -webkit-overflow-scrolling:touch;
+  }
+  .grabber{
+    width:36px;height:4px;border-radius:3px;
+    background:var(--paper-dim);opacity:.4;
+    margin:10px auto 4px;
+  }
+
+  .instrument{
+    display:flex;
+    align-items:center;
+    gap:16px;
+    padding:14px 14px;
+    border:1px solid var(--line);
+    border-radius:10px;
+    background:rgba(255,255,255,.02);
+    margin-bottom:16px;
+  }
+  .compass{width:52px;height:52px;flex:none;}
+  .compass svg{width:100%;height:100%;display:block;}
+  .needle{
+    transform-origin:50% 50%;
+    transition:transform .5s cubic-bezier(.4,0,.2,1);
+  }
+  .compass.spinning .needle{
+    animation:spin 1.1s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  .readout{flex:1; min-width:0;}
+  .readout .row{
+    display:flex; justify-content:space-between;
+    font-family:var(--mono); font-size:15px;
+    letter-spacing:.02em;
+  }
+  .readout .row + .row{margin-top:3px;}
+  .readout .lbl{color:var(--brass-light); font-size:10px; letter-spacing:.14em; align-self:center;}
+  .readout .val{font-weight:500; font-variant-numeric:tabular-nums;}
+  .status-line{
+    margin-top:6px;
+    font-family:var(--sans);
+    font-size:11.5px;
+    color:var(--paper-dim);
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .status-line.locked{color:var(--brass-light);}
+
+  h2.sect{
+    font-family:var(--serif);
+    font-weight:600;
+    font-size:13px;
+    letter-spacing:.04em;
+    text-transform:uppercase;
+    color:var(--paper-dim);
+    margin:18px 0 8px;
+    display:flex; align-items:center; gap:8px;
+  }
+  h2.sect::after{
+    content:"";flex:1;height:1px;background:var(--line);
+  }
+
+  .btn{
+    font-family:var(--sans);
+    font-weight:600;
+    font-size:14.5px;
+    border:none;
+    border-radius:9px;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    transition:transform .12s ease, filter .12s ease, box-shadow .12s ease;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .btn:active{transform:scale(.97);}
+  .btn:focus-visible{outline:2px solid var(--brass-light); outline-offset:2px;}
+  .btn svg{width:17px;height:17px;flex:none;}
+
+  .btn-locate{
+    width:100%; padding:13px 14px;
+    background:transparent;
+    border:1px solid var(--brass);
+    color:var(--brass-light);
+  }
+  .btn-locate:hover{background:rgba(201,150,63,.1);}
+
+  .field-row{display:flex; gap:8px;}
+  input[type="text"], input[type="number"]{
+    flex:1; min-width:0;
+    font-family:var(--sans);
+    font-size:14.5px;
+    color:var(--paper);
+    background:var(--ink-3);
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:11px 12px;
+  }
+  input::placeholder{color:var(--paper-dim); opacity:.65;}
+  input:focus-visible{outline:2px solid var(--brass-light); outline-offset:1px;}
+
+  .btn-go{
+    padding:0 16px;
+    background:var(--brass);
+    color:var(--ink);
+  }
+  .btn-go:hover{background:var(--brass-light);}
+
+  .gps-grid{display:flex; gap:8px;}
+  .gps-grid input{font-family:var(--mono); font-size:13.5px;}
+
+  .actions{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:10px;
+    margin-top:20px;
+  }
+  .action{
+    flex-direction:column;
+    padding:13px 6px 11px;
+    color:var(--paper);
+    box-shadow:0 4px 14px rgba(0,0,0,.28);
+  }
+  .action svg{width:20px;height:20px;}
+  .action span{font-size:11.5px; letter-spacing:.01em;}
+  .action-clear{background:linear-gradient(180deg, var(--red), var(--red-dark));}
+  .action-clear:hover{filter:brightness(1.08);}
+  .action-sms{background:linear-gradient(180deg, var(--green), var(--green-dark));}
+  .action-sms:hover{filter:brightness(1.08);}
+  .action-lock{background:linear-gradient(180deg, var(--blue), var(--blue-dark));}
+  .action-lock:hover{filter:brightness(1.08);}
+  .action-lock.is-locked{background:linear-gradient(180deg,var(--brass),#a97a2f); color:var(--ink);}
+
+  .hint{
+    margin-top:14px;
+    font-size:11px;
+    line-height:1.5;
+    color:var(--paper-dim);
+    opacity:.75;
+  }
+
+  /* toast */
+  .toast{
+    position:fixed;
+    left:50%; top:calc(env(safe-area-inset-top) + 66px);
+    transform:translateX(-50%) translateY(-8px);
+    background:var(--ink-3);
+    border:1px solid var(--brass);
+    color:var(--paper);
+    font-size:13px;
+    padding:9px 16px;
+    border-radius:20px;
+    z-index:1200;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .25s ease, transform .25s ease;
+    white-space:nowrap;
+    max-width:88vw;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+
+  /* custom leaflet marker */
+  .pin-wrap{display:flex; flex-direction:column; align-items:center;}
+  .pin{width:30px;height:30px; filter:drop-shadow(0 3px 6px rgba(0,0,0,.5));}
+  .pin.locked path{fill:var(--brass);}
+  .pin.free path{fill:var(--blue);}
+  .pin-pulse{
+    width:10px;height:10px;border-radius:50%;
+    background:rgba(201,150,63,.35);
+    margin-top:-4px;
+    animation:pulse 1.8s ease-out infinite;
+  }
+  @keyframes pulse{
+    0%{transform:scale(.6);opacity:.7;}
+    100%{transform:scale(2.6);opacity:0;}
+  }
+  .leaflet-control-attribution{
+    background:rgba(14,26,43,.7) !important;
+    color:var(--paper-dim) !important;
+    font-size:10px !important;
+  }
+  .leaflet-control-attribution a{color:var(--brass-light) !important;}
+  .leaflet-control-zoom{display:none;}
+
+  /* ---------- responsive layout ---------- */
+  /* mobile: bottom sheet */
+  .panel{
+    left:0; right:0; bottom:0;
+    max-height:66vh;
+    border-radius:18px 18px 0 0;
+  }
+
+  /* tablets (iPad portrait ~768/810/834, landscape ~1024, and up) */
+  @media (min-width:640px){
+    .panel{
+      top:0; bottom:0; right:0; left:auto;
+      width:380px;
+      max-height:none;
+      border-top:none;
+      border-left:1px solid rgba(201,150,63,.35);
+      box-shadow:-14px 0 40px rgba(0,0,0,.45);
+      padding-top:env(safe-area-inset-top);
+    }
+    .panel.collapsed{
+      transform:translateX(calc(100% - 2px));
+    }
+    .grabber{display:none;}
+    .panel-scroll{padding:26px 24px 28px;}
+    .topbar{padding-right:398px;}
+    body.panel-collapsed .topbar{padding-right:26px;}
+    .reopen-tab{
+      left:auto; right:24px; bottom:auto;
+      top:calc(env(safe-area-inset-top) + 76px);
+      transform:translateX(24px);
+    }
+    body.panel-collapsed .reopen-tab{transform:translateX(0);}
+  }
+
+  /* PC / laptops from ~13" (≥1024 css px) and iPad Pro landscape */
+  @media (min-width:1024px){
+    .panel{width:420px;}
+    .topbar{padding-right:438px; padding-left:26px; padding-top:22px;}
+    body.panel-collapsed .topbar{padding-right:26px;}
+    .brand{font-size:19px;}
+    .panel-scroll{padding:30px 28px 32px;}
+    h2.sect{margin-top:22px;}
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    .compass.spinning .needle{animation:none;}
+    .pin-pulse{animation:none;}
+    .btn{transition:none;}
+    .panel{transition:none;}
+    .reopen-tab{transition:none;}
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="topbar">
+  <div class="brand">MÉRIDIEN <small>Repère GPS</small></div>
+  <div class="topbar-controls">
+    <button class="icon-btn" id="btnToggleMap" aria-label="Libérer la carte complète" title="Libérer la carte">
+      <svg id="toggleIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3H5a2 2 0 0 0-2 2v4M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4M15 21h4a2 2 0 0 0 2-2v-4"/></svg>
+    </button>
+    <div class="ticker">
+      <div><b id="tickLat">— — —</b></div>
+      <div><b id="tickLon">— — —</b></div>
+    </div>
+  </div>
+</div>
+
+<button class="reopen-tab" id="btnReopen">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>
+  Afficher le panneau
+</button>
+
+<div class="panel">
+  <div class="grabber"></div>
+  <div class="panel-scroll">
+
+    <div class="instrument">
+      <div class="compass" id="compass">
+        <svg viewBox="0 0 52 52">
+          <circle cx="26" cy="26" r="24" fill="none" stroke="rgba(243,238,226,.18)" stroke-width="1"/>
+          <circle cx="26" cy="26" r="24" fill="none" stroke="var(--brass)" stroke-width="1.2" stroke-dasharray="1 6" opacity=".7"/>
+          <text x="26" y="8" text-anchor="middle" font-size="6" fill="#c9c2ae" font-family="JetBrains Mono">N</text>
+          <g class="needle" id="needle">
+            <polygon points="26,10 30,26 26,23 22,26" fill="var(--brass-light)"/>
+            <polygon points="26,42 30,26 26,29 22,26" fill="#7c8a99"/>
+          </g>
+          <circle cx="26" cy="26" r="2.4" fill="var(--paper)"/>
+        </svg>
+      </div>
+      <div class="readout">
+        <div class="row"><span class="lbl">LAT</span><span class="val" id="roLat">0.000000</span></div>
+        <div class="row"><span class="lbl">LON</span><span class="val" id="roLon">0.000000</span></div>
+        <div class="status-line" id="statusLine">Aucun repère placé</div>
+      </div>
+    </div>
+
+    <h2 class="sect">Position</h2>
+    <button class="btn btn-locate" id="btnLocate">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+      Me localiser
+    </button>
+
+    <h2 class="sect">Adresse</h2>
+    <div class="field-row">
+      <input type="text" id="addrInput" placeholder="Numéro, rue, ville…" autocomplete="off">
+      <button class="btn btn-go" id="btnAddr" aria-label="Chercher l'adresse">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      </button>
+    </div>
+
+    <h2 class="sect">Point GPS</h2>
+    <div class="gps-grid">
+      <input type="number" id="latInput" placeholder="Latitude" step="0.000001">
+      <input type="number" id="lonInput" placeholder="Longitude" step="0.000001">
+      <button class="btn btn-go" id="btnGps" aria-label="Placer le point">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+
+    <div class="actions">
+      <button class="btn action action-clear" id="btnClear">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6"/></svg>
+        <span>Effacer</span>
+      </button>
+      <button class="btn action action-sms" id="btnSms">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>Envoyer SMS</span>
+      </button>
+      <button class="btn action action-lock" id="btnLock">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" id="lockIcon"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        <span id="lockLabel">Déplacer</span>
+      </button>
+    </div>
+
+    <div class="hint">Touchez la carte pour déplacer le repère tant qu'il n'est pas verrouillé. Le bouton bleu verrouille sa position.</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  var map = L.map('map', { zoomControl:false, attributionControl:true }).setView([46.6, 2.4], 6);
+  L.control.zoom({position:'bottomleft'}).addTo(map);
+
+  // OpenStreetMap standard
+  var tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    subdomains: ['a','b','c'],
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  var tileErrorCount = 0;
+  tileLayer.on('tileerror', function(){
+    tileErrorCount++;
+    if(tileErrorCount === 8){
+      toast('Le fond de carte peine à charger — vérifiez la connexion réseau.');
+    }
+  });
+
+  var marker = null;
+  var locked = false;
+  var moveArmed = false; // true when user can click map to move
+
+  var tickLat = document.getElementById('tickLat');
+  var tickLon = document.getElementById('tickLon');
+  var roLat = document.getElementById('roLat');
+  var roLon = document.getElementById('roLon');
+  var statusLine = document.getElementById('statusLine');
+  var compass = document.getElementById('compass');
+  var toastEl = document.getElementById('toast');
+  var lockBtn = document.getElementById('btnLock');
+  var lockLabel = document.getElementById('lockLabel');
+
+  function toast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(function(){ toastEl.classList.remove('show'); }, 2600);
+  }
+
+  function fmt(n){ return (typeof n === 'number') ? n.toFixed(6) : '—'; }
+
+  function pinIcon(){
+    var cls = locked ? 'locked' : 'free';
+    return L.divIcon({
+      className:'',
+      html:
+        '<div class="pin-wrap">' +
+          '<svg class="pin ' + cls + '" viewBox="0 0 24 30"><path d="M12 0C5.4 0 0 5.4 0 12c0 8.6 12 18 12 18s12-9.4 12-18C24 5.4 18.6 0 12 0z"/></svg>' +
+          '<div class="pin-pulse"></div>' +
+        '</div>',
+      iconSize:[30,30],
+      iconAnchor:[15,30]
+    });
+  }
+
+  var latInputEl = document.getElementById('latInput');
+  var lonInputEl = document.getElementById('lonInput');
+
+  function setCoordDisplays(lat, lon){
+    tickLat.textContent = 'LAT ' + fmt(lat);
+    tickLon.textContent = 'LON ' + fmt(lon);
+    roLat.textContent = fmt(lat);
+    roLon.textContent = fmt(lon);
+    if(typeof lat === 'number' && typeof lon === 'number'){
+      latInputEl.value = lat.toFixed(6);
+      lonInputEl.value = lon.toFixed(6);
+    }
+  }
+
+  function updateStatus(){
+    if(!marker){
+      statusLine.textContent = 'Aucun repère placé';
+      statusLine.classList.remove('locked');
+      lockLabel.textContent = 'Déplacer';
+      lockBtn.classList.remove('is-locked');
+      return;
+    }
+    if(locked){
+      statusLine.textContent = 'Position verrouillée';
+      statusLine.classList.add('locked');
+      lockLabel.textContent = 'Verrouillé';
+      lockBtn.classList.add('is-locked');
+    } else {
+      statusLine.textContent = moveArmed ? 'Touchez la carte pour placer le repère' : 'Repère déplaçable (glisser ou toucher la carte)';
+      statusLine.classList.remove('locked');
+      lockLabel.textContent = 'Déplacer';
+      lockBtn.classList.remove('is-locked');
+    }
+  }
+
+  function setMarkerDraggable(m, enabled){
+    if(!m || !m.dragging) return;
+    if(enabled){ m.dragging.enable(); } else { m.dragging.disable(); }
+  }
+
+  function placeMarker(lat, lon, pan){
+    var ll = L.latLng(lat, lon);
+    if(marker){
+      marker.setLatLng(ll);
+      marker.setIcon(pinIcon());
+    } else {
+      marker = L.marker(ll, { icon: pinIcon(), draggable: !locked }).addTo(map);
+      marker.on('dragend', function(){
+        var p = marker.getLatLng();
+        removeAccuracyCircle();
+        setCoordDisplays(p.lat, p.lng);
+      });
+    }
+    setMarkerDraggable(marker, !locked);
+    setCoordDisplays(lat, lon);
+    if(pan !== false){ map.setView(ll, Math.max(map.getZoom(), 14)); }
+    updateStatus();
+  }
+
+  var accCircle = null;
+  function showAccuracyCircle(lat, lon, acc){
+    var ll = L.latLng(lat, lon);
+    if(accCircle){
+      accCircle.setLatLng(ll);
+      accCircle.setRadius(acc);
+    } else {
+      accCircle = L.circle(ll, {
+        radius: acc,
+        color:'#c9963f', weight:1, fillColor:'#c9963f', fillOpacity:.12, interactive:false
+      }).addTo(map);
+    }
+  }
+  function removeAccuracyCircle(){
+    if(accCircle){ map.removeLayer(accCircle); accCircle = null; }
+  }
+
+  map.on('click', function(e){
+    if(locked) return;
+    removeAccuracyCircle();
+    placeMarker(e.latlng.lat, e.latlng.lng, false);
+    moveArmed = false;
+    updateStatus();
+  });
+
+  /* ---------- Me localiser ---------- */
+  var locateWatchId = null;
+
+  document.getElementById('btnLocate').addEventListener('click', function(){
+    if(!navigator.geolocation){
+      toast('Géolocalisation indisponible sur cet appareil.');
+      return;
+    }
+    if(locateWatchId !== null){ navigator.geolocation.clearWatch(locateWatchId); locateWatchId = null; }
+
+    compass.classList.add('spinning');
+    var bestAcc = Infinity;
+    var startTime = Date.now();
+    var safetyTimer = null;
+
+    function stopWatch(){
+      if(locateWatchId !== null){ navigator.geolocation.clearWatch(locateWatchId); locateWatchId = null; }
+      if(safetyTimer){ clearTimeout(safetyTimer); safetyTimer = null; }
+      compass.classList.remove('spinning');
+    }
+
+    locateWatchId = navigator.geolocation.watchPosition(function(pos){
+      var acc = pos.coords.accuracy;
+      if(acc <= bestAcc){
+        bestAcc = acc;
+        locked = false;
+        placeMarker(pos.coords.latitude, pos.coords.longitude);
+        showAccuracyCircle(pos.coords.latitude, pos.coords.longitude, acc);
+      }
+      // s'arrête dès que la précision est bonne, ou après 9s d'affinage
+      if(acc <= 25 || Date.now() - startTime > 9000){
+        stopWatch();
+        toast('Position trouvée (précision ± ' + Math.round(bestAcc) + ' m).');
+      }
+    }, function(err){
+      stopWatch();
+      var msg = 'Localisation indisponible.';
+      if(err && err.code === 1) msg = 'Localisation refusée — autorisez l\'accès à la position.';
+      else if(err && err.code === 3) msg = 'Délai de localisation dépassé, réessayez.';
+      toast(msg);
+    }, { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
+
+    // garde-fou : si aucune mesure décente après 9.5s, on garde la meilleure obtenue
+    safetyTimer = setTimeout(function(){
+      if(locateWatchId !== null){
+        stopWatch();
+        if(bestAcc < Infinity){
+          toast('Position trouvée (précision ± ' + Math.round(bestAcc) + ' m).');
+        }
+      }
+    }, 9500);
+  });
+
+  /* ---------- Adresse ---------- */
+  function searchAddress(){
+    var q = document.getElementById('addrInput').value.trim();
+    if(!q){ toast('Saisissez une adresse.'); return; }
+    toast('Recherche…');
+    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0&q=' + encodeURIComponent(q), {
+      headers: { 'Accept-Language': 'fr' }
+    })
+      .then(function(r){
+        if(!r.ok) throw new Error('Serveur de recherche indisponible (HTTP ' + r.status + ')');
+        return r.json();
+      })
+      .then(function(data){
+        if(!data || !data.length){ toast('Adresse introuvable — précisez la ville ou le pays.'); return; }
+        locked = false;
+        removeAccuracyCircle();
+        placeMarker(parseFloat(data[0].lat), parseFloat(data[0].lon));
+        toast('Adresse localisée.');
+      })
+      .catch(function(err){
+        toast('Erreur de recherche : ' + (err && err.message ? err.message : 'réseau bloqué'));
+      });
+  }
+  document.getElementById('btnAddr').addEventListener('click', searchAddress);
+  document.getElementById('addrInput').addEventListener('keydown', function(e){ if(e.key === 'Enter') searchAddress(); });
+
+  /* ---------- Point GPS ---------- */
+  function goToGps(){
+    var lat = parseFloat(document.getElementById('latInput').value);
+    var lon = parseFloat(document.getElementById('lonInput').value);
+    if(isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180){
+      toast('Coordonnées invalides.');
+      return;
+    }
+    locked = false;
+    removeAccuracyCircle();
+    placeMarker(lat, lon);
+    toast('Point placé.');
+  }
+  document.getElementById('btnGps').addEventListener('click', goToGps);
+  ['latInput','lonInput'].forEach(function(id){
+    document.getElementById(id).addEventListener('keydown', function(e){ if(e.key === 'Enter') goToGps(); });
+  });
+
+  /* ---------- Rouge : effacer ---------- */
+  document.getElementById('btnClear').addEventListener('click', function(){
+    if(marker){ map.removeLayer(marker); marker = null; }
+    removeAccuracyCircle();
+    if(locateWatchId !== null){ navigator.geolocation.clearWatch(locateWatchId); locateWatchId = null; compass.classList.remove('spinning'); }
+    locked = false;
+    moveArmed = false;
+    document.getElementById('addrInput').value = '';
+    document.getElementById('latInput').value = '';
+    document.getElementById('lonInput').value = '';
+    setCoordDisplays(null, null);
+    updateStatus();
+    toast('Repère effacé.');
+  });
+
+  /* ---------- Vert : SMS ---------- */
+  document.getElementById('btnSms').addEventListener('click', function(){
+    if(!marker){ toast('Placez un repère avant d\'envoyer.'); return; }
+    var p = marker.getLatLng();
+    var link = 'https://maps.google.com/?q=' + p.lat.toFixed(6) + ',' + p.lng.toFixed(6);
+    var body = 'Ma position : ' + p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + ' — ' + link;
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    var uri = (isIOS ? 'sms:&body=' : 'sms:?body=') + encodeURIComponent(body);
+    window.location.href = uri;
+  });
+
+  /* ---------- Bleu : déplacer / verrouiller ---------- */
+  document.getElementById('btnLock').addEventListener('click', function(){
+    if(!marker){ toast('Placez d\'abord un repère.'); return; }
+    if(!locked){
+      locked = true;
+      moveArmed = false;
+      setMarkerDraggable(marker, false);
+      marker.setIcon(pinIcon());
+      toast('Position verrouillée.');
+    } else {
+      locked = false;
+      setMarkerDraggable(marker, true);
+      marker.setIcon(pinIcon());
+      toast('Repère déverrouillé — déplaçable.');
+    }
+    updateStatus();
+  });
+
+  /* ---------- Libérer la carte ---------- */
+  var panelEl = document.querySelector('.panel');
+  var toggleIcon = document.getElementById('toggleIcon');
+  var btnToggleMap = document.getElementById('btnToggleMap');
+  var btnReopen = document.getElementById('btnReopen');
+
+  var ICON_FREE = '<path d="M9 3H5a2 2 0 0 0-2 2v4M15 3h4a2 2 0 0 1 2 2v4M9 21H5a2 2 0 0 1-2-2v-4M15 21h4a2 2 0 0 0 2-2v-4"/>';
+  var ICON_RESTORE = '<path d="M3 9V5a2 2 0 0 1 2-2h4M21 9V5a2 2 0 0 1-2-2h-4M3 15v4a2 2 0 0 0 2 2h4M21 15v4a2 2 0 0 1-2 2h-4"/>';
+
+  function setPanelCollapsed(collapsed){
+    panelEl.classList.toggle('collapsed', collapsed);
+    document.body.classList.toggle('panel-collapsed', collapsed);
+    toggleIcon.innerHTML = collapsed ? ICON_RESTORE : ICON_FREE;
+    btnToggleMap.title = collapsed ? 'Afficher le panneau' : 'Libérer la carte';
+    btnToggleMap.setAttribute('aria-label', collapsed ? 'Afficher le panneau' : 'Libérer la carte complète');
+  }
+
+  btnToggleMap.addEventListener('click', function(){
+    setPanelCollapsed(!panelEl.classList.contains('collapsed'));
+  });
+  btnReopen.addEventListener('click', function(){ setPanelCollapsed(false); });
+
+  updateStatus();
+
+  /* ---------- Stabilité iOS : resynchroniser la carte sans déplacer le repère ---------- */
+  function refreshMapSize(){
+    map.invalidateSize({ pan:false, animate:false });
+  }
+  window.addEventListener('resize', refreshMapSize);
+  window.addEventListener('orientationchange', function(){ setTimeout(refreshMapSize, 300); });
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize', refreshMapSize);
+  }
+  panelEl.addEventListener('transitionend', function(e){
+    if(e.propertyName === 'transform') refreshMapSize();
+  });
+})();
+</script>
+</body>
+</html>
