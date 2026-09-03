@@ -205,6 +205,14 @@
     text-overflow:ellipsis;
   }
   .status-line.locked{color:var(--brass-light);}
+  .track-info{
+    margin-top:4px;
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--green);
+    display:none;
+  }
+  .track-info.show{display:block;}
 
   h2.sect{
     font-family:var(--serif);
@@ -353,6 +361,22 @@
     0%{transform:scale(.6);opacity:.7;}
     100%{transform:scale(2.6);opacity:0;}
   }
+
+  /* marqueur "ma position" (suivi en direct) — distinct du repère */
+  .me-wrap{position:relative; width:22px; height:22px; display:flex; align-items:center; justify-content:center;}
+  .me-dot{
+    width:14px;height:14px;border-radius:50%;
+    background:var(--green);
+    border:2.5px solid var(--paper);
+    box-shadow:0 2px 6px rgba(0,0,0,.5);
+    z-index:1;
+  }
+  .me-pulse{
+    position:absolute;
+    width:14px;height:14px;border-radius:50%;
+    background:rgba(62,142,82,.4);
+    animation:pulse 1.8s ease-out infinite;
+  }
   .leaflet-control-attribution{
     background:rgba(14,26,43,.7) !important;
     color:var(--paper-dim) !important;
@@ -457,6 +481,7 @@
         <div class="row"><span class="lbl">LAT</span><span class="val" id="roLat">0.000000</span></div>
         <div class="row"><span class="lbl">LON</span><span class="val" id="roLon">0.000000</span></div>
         <div class="status-line" id="statusLine">Aucun repère placé</div>
+        <div class="track-info" id="trackInfo"></div>
       </div>
     </div>
 
@@ -568,6 +593,23 @@
     });
   }
 
+  function meIcon(){
+    return L.divIcon({
+      className:'',
+      html:
+        '<div class="me-wrap">' +
+          '<div class="me-pulse"></div>' +
+          '<div class="me-dot"></div>' +
+        '</div>',
+      iconSize:[22,22],
+      iconAnchor:[11,11]
+    });
+  }
+
+  function formatDistance(d){
+    return d < 1000 ? (Math.round(d) + ' m') : ((d/1000).toFixed(2) + ' km');
+  }
+
   var latInputEl = document.getElementById('latInput');
   var lonInputEl = document.getElementById('lonInput');
 
@@ -608,7 +650,7 @@
     if(enabled){ m.dragging.enable(); } else { m.dragging.disable(); }
   }
 
-  function placeMarker(lat, lon, pan){
+  function placeMarker(lat, lon, pan, minZoom){
     var ll = L.latLng(lat, lon);
     if(marker){
       marker.setLatLng(ll);
@@ -617,15 +659,49 @@
       marker = L.marker(ll, { icon: pinIcon(), draggable: !locked }).addTo(map);
       marker.on('dragend', function(){
         var p = marker.getLatLng();
-        if(isTracking){ stopTracking(true); }
         removeAccuracyCircle();
         setCoordDisplays(p.lat, p.lng);
+        refreshTrackInfo();
       });
     }
     setMarkerDraggable(marker, !locked);
     setCoordDisplays(lat, lon);
-    if(pan !== false){ map.setView(ll, Math.max(map.getZoom(), 14)); }
+    if(pan !== false){ map.setView(ll, Math.max(map.getZoom(), minZoom || 14)); }
     updateStatus();
+    refreshTrackInfo();
+  }
+
+  var meMarker = null;
+  var trackInfo = document.getElementById('trackInfo');
+
+  function placeMeMarker(lat, lon){
+    var ll = L.latLng(lat, lon);
+    if(meMarker){
+      meMarker.setLatLng(ll);
+    } else {
+      meMarker = L.marker(ll, { icon: meIcon(), interactive:false, zIndexOffset:500 }).addTo(map);
+    }
+    updateTrackInfo(ll);
+  }
+
+  function removeMeMarker(){
+    if(meMarker){ map.removeLayer(meMarker); meMarker = null; }
+    trackInfo.classList.remove('show');
+  }
+
+  function updateTrackInfo(meLatLng){
+    if(!isTracking){ trackInfo.classList.remove('show'); return; }
+    if(marker){
+      var d = meLatLng.distanceTo(marker.getLatLng());
+      trackInfo.textContent = (locked ? '● ' : '○ ') + formatDistance(d) + ' du repère';
+    } else {
+      trackInfo.textContent = 'Suivi actif — aucun repère de référence';
+    }
+    trackInfo.classList.add('show');
+  }
+
+  function refreshTrackInfo(){
+    if(meMarker){ updateTrackInfo(meMarker.getLatLng()); }
   }
 
   var accCircle = null;
@@ -647,7 +723,6 @@
 
   map.on('click', function(e){
     if(locked) return;
-    if(isTracking){ stopTracking(true); }
     removeAccuracyCircle();
     placeMarker(e.latlng.lat, e.latlng.lng, false);
     moveArmed = false;
@@ -663,7 +738,6 @@
       return;
     }
     if(locateWatchId !== null){ navigator.geolocation.clearWatch(locateWatchId); locateWatchId = null; }
-    if(isTracking){ stopTracking(true); }
 
     compass.classList.add('spinning');
     var bestAcc = Infinity;
@@ -681,7 +755,7 @@
       if(acc <= bestAcc){
         bestAcc = acc;
         locked = false;
-        placeMarker(pos.coords.latitude, pos.coords.longitude);
+        placeMarker(pos.coords.latitude, pos.coords.longitude, true, 17);
         showAccuracyCircle(pos.coords.latitude, pos.coords.longitude, acc);
       }
       // s'arrête dès que la précision est bonne, ou après 9s d'affinage
@@ -721,6 +795,7 @@
     compass.classList.remove('spinning');
     trackBtn.classList.remove('is-tracking');
     trackLabel.textContent = 'Suivi en direct';
+    trackInfo.classList.remove('show');
   }
 
   trackBtn.addEventListener('click', function(){
@@ -729,24 +804,27 @@
       toast('Géolocalisation indisponible sur cet appareil.');
       return;
     }
-    // on coupe le pointage ponctuel s'il tournait encore
+    // on coupe le pointage ponctuel s'il tournait encore (il partage le même GPS)
     if(locateWatchId !== null){ navigator.geolocation.clearWatch(locateWatchId); locateWatchId = null; }
 
     isTracking = true;
-    locked = false;
     trackBtn.classList.add('is-tracking');
     trackLabel.textContent = 'Arrêter le suivi';
     compass.classList.add('spinning');
-    toast('Suivi en direct activé.');
+    toast(marker ? 'Suivi en direct activé — le repère reste en place.' : 'Suivi en direct activé.');
 
     var firstFix = true;
     trackWatchId = navigator.geolocation.watchPosition(function(pos){
-      var lat = pos.coords.latitude, lon = pos.coords.longitude, acc = pos.coords.accuracy;
-      placeMarker(lat, lon, false);
-      showAccuracyCircle(lat, lon, acc);
+      var lat = pos.coords.latitude, lon = pos.coords.longitude;
+      placeMeMarker(lat, lon);
       compass.classList.remove('spinning');
       if(firstFix){
-        map.setView([lat, lon], Math.max(map.getZoom(), 16));
+        // on cadre à la fois ma position et le repère de référence s'il existe
+        if(marker){
+          map.fitBounds(L.latLngBounds([L.latLng(lat, lon), marker.getLatLng()]), { padding:[60,60], maxZoom:18 });
+        } else {
+          map.setView([lat, lon], Math.max(map.getZoom(), 18));
+        }
         firstFix = false;
       } else {
         map.panTo([lat, lon], { animate:true });
@@ -810,6 +888,7 @@
     removeAccuracyCircle();
     if(locateWatchId !== null){ navigator.geolocation.clearWatch(locateWatchId); locateWatchId = null; compass.classList.remove('spinning'); }
     if(isTracking){ stopTracking(true); }
+    removeMeMarker();
     locked = false;
     moveArmed = false;
     document.getElementById('addrInput').value = '';
@@ -847,6 +926,7 @@
       toast('Repère déverrouillé — déplaçable.');
     }
     updateStatus();
+    refreshTrackInfo();
   });
 
   /* ---------- Libérer la carte ---------- */
