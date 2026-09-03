@@ -246,6 +246,22 @@
   }
   .btn-locate:hover{background:rgba(201,150,63,.1);}
 
+  .btn-track{
+    width:100%; padding:13px 14px;
+    margin-top:10px;
+    background:transparent;
+    border:1px solid var(--green);
+    color:var(--green);
+  }
+  .btn-track:hover{background:rgba(62,142,82,.1);}
+  .btn-track.is-tracking{
+    background:linear-gradient(180deg, var(--green), var(--green-dark));
+    color:var(--paper);
+    border-color:transparent;
+  }
+  .btn-track.is-tracking svg{animation:pulseDot 1.4s ease-in-out infinite;}
+  @keyframes pulseDot{ 0%,100%{opacity:1;} 50%{opacity:.45;} }
+
   .field-row{display:flex; gap:8px;}
   input[type="text"], input[type="number"]{
     flex:1; min-width:0;
@@ -449,6 +465,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
       Me localiser
     </button>
+    <button class="btn btn-track" id="btnTrack">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2C8.4 2 5.5 4.9 5.5 8.5c0 5.2 6.5 12.3 6.5 12.3s6.5-7.1 6.5-12.3C18.5 4.9 15.6 2 12 2z"/><circle cx="12" cy="8.5" r="2.3"/></svg>
+      <span id="trackLabel">Suivi en direct</span>
+    </button>
 
     <h2 class="sect">Adresse</h2>
     <div class="field-row">
@@ -597,6 +617,7 @@
       marker = L.marker(ll, { icon: pinIcon(), draggable: !locked }).addTo(map);
       marker.on('dragend', function(){
         var p = marker.getLatLng();
+        if(isTracking){ stopTracking(true); }
         removeAccuracyCircle();
         setCoordDisplays(p.lat, p.lng);
       });
@@ -626,6 +647,7 @@
 
   map.on('click', function(e){
     if(locked) return;
+    if(isTracking){ stopTracking(true); }
     removeAccuracyCircle();
     placeMarker(e.latlng.lat, e.latlng.lng, false);
     moveArmed = false;
@@ -641,6 +663,7 @@
       return;
     }
     if(locateWatchId !== null){ navigator.geolocation.clearWatch(locateWatchId); locateWatchId = null; }
+    if(isTracking){ stopTracking(true); }
 
     compass.classList.add('spinning');
     var bestAcc = Infinity;
@@ -683,6 +706,58 @@
         }
       }
     }, 9500);
+  });
+
+  /* ---------- Suivi en direct ---------- */
+  var trackWatchId = null;
+  var isTracking = false;
+  var trackBtn = document.getElementById('btnTrack');
+  var trackLabel = document.getElementById('trackLabel');
+
+  function stopTracking(silent){
+    if(trackWatchId !== null){ navigator.geolocation.clearWatch(trackWatchId); trackWatchId = null; }
+    if(isTracking && !silent){ toast('Suivi arrêté.'); }
+    isTracking = false;
+    compass.classList.remove('spinning');
+    trackBtn.classList.remove('is-tracking');
+    trackLabel.textContent = 'Suivi en direct';
+  }
+
+  trackBtn.addEventListener('click', function(){
+    if(isTracking){ stopTracking(); return; }
+    if(!navigator.geolocation){
+      toast('Géolocalisation indisponible sur cet appareil.');
+      return;
+    }
+    // on coupe le pointage ponctuel s'il tournait encore
+    if(locateWatchId !== null){ navigator.geolocation.clearWatch(locateWatchId); locateWatchId = null; }
+
+    isTracking = true;
+    locked = false;
+    trackBtn.classList.add('is-tracking');
+    trackLabel.textContent = 'Arrêter le suivi';
+    compass.classList.add('spinning');
+    toast('Suivi en direct activé.');
+
+    var firstFix = true;
+    trackWatchId = navigator.geolocation.watchPosition(function(pos){
+      var lat = pos.coords.latitude, lon = pos.coords.longitude, acc = pos.coords.accuracy;
+      placeMarker(lat, lon, false);
+      showAccuracyCircle(lat, lon, acc);
+      compass.classList.remove('spinning');
+      if(firstFix){
+        map.setView([lat, lon], Math.max(map.getZoom(), 16));
+        firstFix = false;
+      } else {
+        map.panTo([lat, lon], { animate:true });
+      }
+    }, function(err){
+      stopTracking(true);
+      var msg = 'Localisation indisponible.';
+      if(err && err.code === 1) msg = 'Localisation refusée — autorisez l\'accès à la position.';
+      else if(err && err.code === 3) msg = 'Délai de localisation dépassé, réessayez.';
+      toast(msg);
+    }, { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
   });
 
   /* ---------- Adresse ---------- */
@@ -734,6 +809,7 @@
     if(marker){ map.removeLayer(marker); marker = null; }
     removeAccuracyCircle();
     if(locateWatchId !== null){ navigator.geolocation.clearWatch(locateWatchId); locateWatchId = null; compass.classList.remove('spinning'); }
+    if(isTracking){ stopTracking(true); }
     locked = false;
     moveArmed = false;
     document.getElementById('addrInput').value = '';
